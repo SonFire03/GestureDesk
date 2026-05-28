@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+cd "$ROOT"
+if [ ! -d .venv ]; then
+  echo "[gestu] .venv introuvable dans $ROOT" >&2
+  exit 1
+fi
+# shellcheck disable=SC1091
+source .venv/bin/activate
+exec python run.py "$@"

@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual env
+.venv/
+
+# Local runtime artifacts
+logs/
+*.log
+
+# Local secrets/config
+config.json
+.env
+
+# OS/editor noise
+.DS_Store
+*.swp
