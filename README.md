@@ -1,6 +1,23 @@
 # GestureDesk
+[![Release](https://img.shields.io/badge/release-v1.0.0-00c2ff)](https://github.com/SonFire03/GestureDesk/releases)
+[![Python](https://img.shields.io/badge/python-3.10%2B-2ea44f)](#installation)
+[![License](https://img.shields.io/badge/license-MIT-7a42f4)](#)
 
 Projet local Python/Linux pour piloter des actions PC non destructives via gestes de la main (camera USB, `/dev/video0`). Support 2 mains: affichage des 2 mains, controle par la main dominante (configurable).
+
+## Quick Start
+
+```bash
+git clone https://github.com/SonFire03/GestureDesk.git
+cd GestureDesk
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp config.example.json config.json
+mkdir -p models
+# Place ici models/hand_landmarker.task
+./gestu
+```
 
 ## Installation
 
