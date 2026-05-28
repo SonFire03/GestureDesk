@@ -52,6 +52,9 @@ Raccourcis clavier pendant l'execution:
 - `a`: toggle manuel `armed/disarmed`
 - `d`: forcer `disarmed`
 
+- <img width="1404" height="938" alt="image" src="https://github.com/user-attachments/assets/cb615076-28a6-4943-8ac0-f1c23ea80c9e" />
+
+
 ## Depannage camera `/dev/video0`
 
 1. Verifier la camera:
