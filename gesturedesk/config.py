@@ -38,6 +38,7 @@ class AppConfig:
     mouse_adaptive_gain_max: float = 2.0
     mouse_adaptive_scale_px: float = 220.0
     drag_toggle_hold_seconds: float = 0.25
+    pinch_click_hold_seconds: float = 0.12
     dominant_hand_mode: str = "auto"
     scroll_step: int = 120
     enable_mouse_control: bool = True
@@ -47,6 +48,8 @@ class AppConfig:
     enable_body_control: bool = True
     draw_pose_overlay: bool = True
     body_hold_seconds: float = 0.8
+    calibration_stage_seconds: float = 1.1
+    ui_mode: str = "pro"
 
 
 def load_config(path: str | Path = "config.json") -> AppConfig:
@@ -89,6 +92,7 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         mouse_adaptive_gain_max=float(data.get("mouse_adaptive_gain_max", 2.0)),
         mouse_adaptive_scale_px=float(data.get("mouse_adaptive_scale_px", 220.0)),
         drag_toggle_hold_seconds=float(data.get("drag_toggle_hold_seconds", 0.25)),
+        pinch_click_hold_seconds=float(data.get("pinch_click_hold_seconds", 0.12)),
         dominant_hand_mode=str(data.get("dominant_hand_mode", "auto")),
         scroll_step=int(data.get("scroll_step", 120)),
         enable_mouse_control=bool(data.get("enable_mouse_control", True)),
@@ -98,6 +102,8 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         enable_body_control=bool(data.get("enable_body_control", True)),
         draw_pose_overlay=bool(data.get("draw_pose_overlay", True)),
         body_hold_seconds=float(data.get("body_hold_seconds", 0.8)),
+        calibration_stage_seconds=float(data.get("calibration_stage_seconds", 1.1)),
+        ui_mode=str(data.get("ui_mode", "pro")),
     )
 
 

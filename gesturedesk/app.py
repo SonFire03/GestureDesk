@@ -75,6 +75,13 @@ THEMES = {
         "focus": (150, 210, 255),
     },
 }
+CALIBRATION_TARGETS = [
+    (0.50, 0.50, "center"),
+    (0.08, 0.12, "top-left"),
+    (0.92, 0.12, "top-right"),
+    (0.92, 0.88, "bottom-right"),
+    (0.08, 0.88, "bottom-left"),
+]
 
 
 def _create_hand_landmarker(config: AppConfig):
@@ -167,10 +174,17 @@ class GestureDeskApp:
         self._gesture_history: deque[str] = deque(maxlen=5)
         self._active_zone_margin = max(0.01, min(0.25, config.active_zone_margin))
         self._profile_name = "balanced"
-        self._state = GestureStateMachine(history_size=5, drag_hold_seconds=config.drag_toggle_hold_seconds)
+        self._state = GestureStateMachine(
+            history_size=5,
+            drag_hold_seconds=config.drag_toggle_hold_seconds,
+            click_hold_seconds=config.pinch_click_hold_seconds,
+        )
         self._calibrating = False
         self._calibration_started_at = 0.0
         self._calibration_samples: list[tuple[float, float]] = []
+        self._calib_stage_index = 0
+        self._calib_stage_started_at = 0.0
+        self._calib_stage_seconds = max(0.6, float(config.calibration_stage_seconds))
         self._calib_min_x = max(0.0, min(1.0, config.calib_min_x))
         self._calib_max_x = max(self._calib_min_x + 1e-6, min(1.0, config.calib_max_x))
         self._calib_min_y = max(0.0, min(1.0, config.calib_min_y))
@@ -186,6 +200,7 @@ class GestureDeskApp:
         self._last_body_gesture = "none"
         self._pose_model_label = Path(self.config.pose_model_path).stem
         self._last_pose_landmarks = None
+        self._ui_mode = config.ui_mode if config.ui_mode in {"pro", "debug"} else "pro"
 
     def run(self) -> int:
         try:
@@ -314,10 +329,8 @@ class GestureDeskApp:
                 gesture = majority_vote_gesture(list(self._gesture_history), fallback=gesture)
                 self._gesture_confidence = self._estimate_gesture_confidence(gesture)
 
-                if self._calibrating and index_point is not None:
-                    self._calibration_samples.append(index_point)
-                if self._calibrating and (time.monotonic() - self._calibration_started_at) >= 4.0:
-                    self._finish_calibration()
+                if self._calibrating:
+                    self._update_calibration_wizard(index_point)
 
                 now = time.monotonic()
                 if gesture == "open_palm":
@@ -370,6 +383,8 @@ class GestureDeskApp:
                     hands_count=len(result.hand_landmarks) if result.hand_landmarks else 0,
                     fps=self._compute_fps(),
                 )
+                if self._calibrating:
+                    self._draw_calibration_wizard(frame)
                 self._draw_active_zone(frame)
                 self._t_render_ms = (time.monotonic() - t_rnd) * 1000.0
                 cv2.imshow("GestureDesk", frame)
@@ -399,6 +414,8 @@ class GestureDeskApp:
                     self._apply_profile("performance")
                 if key == ord("t"):
                     self._cycle_theme()
+                if key == ord("u"):
+                    self._toggle_ui_mode()
                 if key == ord("7"):
                     pose_landmarker = self._disable_body_control_runtime(pose_landmarker)
                 if key == ord("8"):
@@ -590,7 +607,7 @@ class GestureDeskApp:
         h, w = frame.shape[:2]
         scale = max(0.85, min(1.25, w / 1280.0))
         x0, y0 = 10, 10
-        panel_w, panel_h = 240, 105
+        panel_w, panel_h = (240, 72) if self._ui_mode == "pro" else (240, 105)
         fs = 0.38
         fs_small = 0.32
         lh = 15
@@ -602,30 +619,47 @@ class GestureDeskApp:
         cv2.putText(frame, f"H {hands_count}  G {gesture}", (x0 + 8, y0 + 13 + lh), cv2.FONT_HERSHEY_SIMPLEX, fs, theme["hud_text"], 1, cv2.LINE_AA)
         cv2.putText(frame, f"S {armed_label}", (x0 + 8, y0 + 13 + lh * 2), cv2.FONT_HERSHEY_SIMPLEX, fs, color, 1, cv2.LINE_AA)
         cv2.putText(frame, f"A {self._last_action_label}", (x0 + 8, y0 + 13 + lh * 3), cv2.FONT_HERSHEY_SIMPLEX, fs, theme["hud_text"], 1, cv2.LINE_AA)
-        cv2.putText(frame, f"P {self._profile_name}  C {self._gesture_confidence:.2f}", (x0 + 8, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
-        cv2.putText(frame, f"B {self._last_body_gesture}", (x0 + 8, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
-        cv2.putText(frame, f"M {self._pose_model_label}", (x0 + 118, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
-        if self._calibrating:
-            cv2.putText(frame, "CAL...", (x0 + panel_w - 42, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, (120, 255, 210), 1, cv2.LINE_AA)
+        if self._ui_mode == "debug":
+            cv2.putText(frame, f"P {self._profile_name}  C {self._gesture_confidence:.2f}", (x0 + 8, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
+            cv2.putText(frame, f"B {self._last_body_gesture}", (x0 + 8, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
+            cv2.putText(frame, f"M {self._pose_model_label}", (x0 + 118, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
+            if self._calibrating:
+                cv2.putText(frame, "CAL...", (x0 + panel_w - 42, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, (120, 255, 210), 1, cv2.LINE_AA)
 
-        # Perf breakdown card (top-right)
-        perf_w = int(250 * scale)
-        perf_h = int(42 * scale)
-        px = max(10, w - perf_w - 10)
-        py = 10
-        self._blend_roi(frame, px, py, px + perf_w, py + perf_h, 0.35, theme["bg"])
-        cv2.rectangle(frame, (px, py), (px + perf_w, py + perf_h), theme["hud_border"], 1, cv2.LINE_AA)
-        cv2.putText(
-            frame,
-            f"ms  cap {self._t_capture_ms:.1f}  hand {self._t_infer_ms:.1f}  pose {self._t_pose_ms:.1f}",
-            (px + int(8 * scale), py + int(26 * scale)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            fs_small,
-            theme["hud_text"],
-            1,
-            cv2.LINE_AA,
-        )
+        if self._ui_mode == "debug":
+            perf_w = int(250 * scale)
+            perf_h = int(42 * scale)
+            px = max(10, w - perf_w - 10)
+            py = 10
+            self._blend_roi(frame, px, py, px + perf_w, py + perf_h, 0.35, theme["bg"])
+            cv2.rectangle(frame, (px, py), (px + perf_w, py + perf_h), theme["hud_border"], 1, cv2.LINE_AA)
+            cv2.putText(
+                frame,
+                f"ms  cap {self._t_capture_ms:.1f}  hand {self._t_infer_ms:.1f}  pose {self._t_pose_ms:.1f}",
+                (px + int(8 * scale), py + int(26 * scale)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                fs_small,
+                theme["hud_text"],
+                1,
+                cv2.LINE_AA,
+            )
         # Gesture timeline removed on user request.
+
+    def _draw_calibration_wizard(self, frame) -> None:
+        h, w = frame.shape[:2]
+        tx, ty, label = CALIBRATION_TARGETS[self._calib_stage_index]
+        cx, cy = int(tx * w), int(ty * h)
+        elapsed = time.monotonic() - self._calib_stage_started_at
+        progress = max(0.0, min(1.0, elapsed / self._calib_stage_seconds))
+        cv2.circle(frame, (cx, cy), 18, (90, 240, 255), 2, cv2.LINE_AA)
+        cv2.circle(frame, (cx, cy), 6, (255, 255, 255), -1, cv2.LINE_AA)
+        text = f"CALIB {self._calib_stage_index + 1}/{len(CALIBRATION_TARGETS)} {label}"
+        cv2.putText(frame, text, (max(12, cx - 120), max(24, cy - 26)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (230, 245, 255), 1, cv2.LINE_AA)
+        bar_w, bar_h = 180, 10
+        bx = max(10, min(w - bar_w - 10, cx - bar_w // 2))
+        by = min(h - 16, cy + 24)
+        cv2.rectangle(frame, (bx, by), (bx + bar_w, by + bar_h), (120, 140, 160), 1)
+        cv2.rectangle(frame, (bx + 1, by + 1), (bx + int((bar_w - 2) * progress), by + bar_h - 1), (90, 230, 255), -1)
 
     def _switch_pose_model(self, pose_landmarker, model_path: str):
         self.config = AppConfig(**{**self.config.__dict__, "enable_body_control": True, "pose_model_path": model_path})
@@ -745,6 +779,12 @@ class GestureDeskApp:
         self._theme_name = names[(idx + 1) % len(names)]
         self.logger.info("Theme switched: %s", self._theme_name)
 
+    def _toggle_ui_mode(self) -> None:
+        self._ui_mode = "debug" if self._ui_mode == "pro" else "pro"
+        self._last_action_label = f"ui={self._ui_mode}"
+        save_config_updates(self.config_path, {"ui_mode": self._ui_mode})
+        self.logger.info("UI mode switched: %s", self._ui_mode)
+
     def _draw_gesture_timeline(self, frame) -> None:
         if len(self._gesture_timeline) < 2:
             return
@@ -763,11 +803,28 @@ class GestureDeskApp:
     def _start_calibration(self) -> None:
         self._calibrating = True
         self._calibration_started_at = time.monotonic()
+        self._calib_stage_started_at = self._calibration_started_at
+        self._calib_stage_index = 0
         self._calibration_samples = []
-        self.logger.info("Calibration started for 4 seconds")
+        self.logger.info("Calibration wizard started")
+
+    def _update_calibration_wizard(self, index_point: tuple[float, float] | None) -> None:
+        now = time.monotonic()
+        tx, ty, _ = CALIBRATION_TARGETS[self._calib_stage_index]
+        if index_point is not None:
+            dx = index_point[0] - tx
+            dy = index_point[1] - ty
+            if (dx * dx + dy * dy) ** 0.5 <= 0.12:
+                self._calibration_samples.append(index_point)
+        if (now - self._calib_stage_started_at) >= self._calib_stage_seconds:
+            self._calib_stage_index += 1
+            self._calib_stage_started_at = now
+            if self._calib_stage_index >= len(CALIBRATION_TARGETS):
+                self._finish_calibration()
 
     def _finish_calibration(self) -> None:
         self._calibrating = False
+        self._calib_stage_index = 0
         samples = self._calibration_samples
         if len(samples) < 20:
             self.logger.warning("Calibration skipped: not enough samples (%s)", len(samples))

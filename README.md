@@ -66,6 +66,7 @@ Raccourcis clavier pendant l'execution:
 - `q`: quitter proprement
 - `a`: toggle manuel `armed/disarmed`
 - `d`: forcer `disarmed`
+- `u`: basculer UI `pro` / `debug`
 - `7`: mode mains uniquement (desactive body control)
 - `8`: charger `pose_landmarker_lite.task`
 - `9`: charger `pose_landmarker_full.task`
@@ -124,6 +125,12 @@ Reglages utiles dans `config.json`:
   - seuil de transition vers l'acceleration (plus grand = acceleration plus progressive)
 - `drag_toggle_hold_seconds`:
   - maintien minimum du geste `deux doigts` pour activer/desactiver le drag (evite les faux positifs)
+- `pinch_click_hold_seconds`:
+  - maintien minimum du `pinch` avant clic (anti faux clic)
+- `calibration_stage_seconds`:
+  - duree de chaque etape du wizard calibration (centre + coins)
+- `ui_mode`:
+  - `pro` (compact) ou `debug` (details perf/etat)
 - `dominant_hand_mode`:
   - `auto` = main dominante par taille apparente
   - `left` = force la main gauche (vue ecran)
@@ -227,7 +234,7 @@ Pour maximiser les FPS sur machine moyenne:
 ## Profils a chaud
 
 Pendant l'execution:
-- `c` = calibration rapide (4 secondes)
+- `c` = wizard calibration (centre + 4 coins)
 - `1` = precision
 - `2` = balanced
 - `3` = performance

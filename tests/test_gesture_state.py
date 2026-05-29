@@ -35,3 +35,13 @@ def test_toggle_drag_requires_hold_and_release():
     _ = sm.step("idle", "none", now=0.6)
     d5 = sm.step("two_fingers", "toggle_drag", now=0.9)
     assert d5.action == "none"
+
+
+def test_pinch_click_requires_hold():
+    sm = GestureStateMachine(history_size=3, drag_hold_seconds=0.2, click_hold_seconds=0.1)
+    d1 = sm.step("pinch", "left_click", now=0.0)
+    assert d1.action == "none"
+    d2 = sm.step("pinch", "left_click", now=0.05)
+    assert d2.action == "none"
+    d3 = sm.step("pinch", "left_click", now=0.12)
+    assert d3.action == "left_click"

@@ -13,11 +13,18 @@ class GestureDecision:
 class GestureStateMachine:
     """Temporal gesture stabilizer + drag-toggle guard."""
 
-    def __init__(self, history_size: int = 5, drag_hold_seconds: float = 0.22) -> None:
+    def __init__(
+        self,
+        history_size: int = 5,
+        drag_hold_seconds: float = 0.22,
+        click_hold_seconds: float = 0.12,
+    ) -> None:
         self.history: deque[str] = deque(maxlen=max(3, history_size))
         self.drag_hold_seconds = drag_hold_seconds
+        self.click_hold_seconds = click_hold_seconds
         self._two_fingers_started_at: float | None = None
         self._two_fingers_latched = False
+        self._pinch_started_at: float | None = None
 
     def _majority(self) -> str:
         if not self.history:
@@ -47,5 +54,14 @@ class GestureStateMachine:
                     action = "none"
                 else:
                     self._two_fingers_latched = True
+
+        if stable != "pinch":
+            self._pinch_started_at = None
+        elif action == "left_click":
+            if self._pinch_started_at is None:
+                self._pinch_started_at = now
+                action = "none"
+            elif now - self._pinch_started_at < self.click_hold_seconds:
+                action = "none"
 
         return GestureDecision(stable_gesture=stable, action=action)
