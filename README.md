@@ -5,6 +5,21 @@
 
 Projet local Python/Linux pour piloter des actions PC non destructives via gestes de la main (camera USB, `/dev/video0`). Support 2 mains: affichage des 2 mains, controle par la main dominante (configurable).
 
+## Description
+
+GestureDesk est une application locale de hand-tracking pour Ubuntu qui transforme des gestes de la main en actions bureautiques utiles:
+- deplacement du curseur a l'index,
+- drag de fenetres,
+- clic media,
+- profils precision/performance.
+- controle corps (MediaPipe Pose) pour volume/media.
+
+Le projet est concu pour rester testable, modulaire et securise:
+- mode `ARMED` active manuellement,
+- actions non destructives uniquement,
+- calibration sauvegardee localement,
+- logs et tests unitaires inclus.
+
 ## Quick Start
 
 ```bash
@@ -51,6 +66,9 @@ Raccourcis clavier pendant l'execution:
 - `q`: quitter proprement
 - `a`: toggle manuel `armed/disarmed`
 - `d`: forcer `disarmed`
+- `7`: mode mains uniquement (desactive body control)
+- `8`: charger `pose_landmarker_lite.task`
+- `9`: charger `pose_landmarker_full.task`
 
 - <img width="1404" height="938" alt="image" src="https://github.com/user-attachments/assets/cb615076-28a6-4943-8ac0-f1c23ea80c9e" />
 
@@ -114,6 +132,12 @@ Reglages utiles dans `config.json`:
   - resolution de capture (plus bas = plus de FPS)
 - `camera_fps`:
   - fps cible demande a la webcam (selon support reel du driver)
+- `camera_fourcc`:
+  - `MJPG` recommande pour une meilleure qualite/latence
+- `camera_autofocus` / `camera_auto_exposure`:
+  - active les reglages auto de la webcam
+- `camera_exposure`:
+  - valeur manuelle si `camera_auto_exposure=false`
 - `inference_scale`:
   - redimensionnement applique uniquement a l'inference MediaPipe (0.5 a 1.0)
 - `inference_every_n_frames`:
@@ -125,6 +149,12 @@ Reglages utiles dans `config.json`:
   - `false` pour ne pas dessiner la main secondaire (gain FPS)
 - `draw_finger_card`:
   - `false` pour retirer la carte doigts (gain FPS leger)
+- `enable_body_control`:
+  - active le controle corps (pose epaules/poignets)
+- `draw_pose_overlay`:
+  - affiche le squelette haut du corps
+- `body_hold_seconds`:
+  - maintien requis pour `deux mains levees` (anti faux positifs)
 - `scroll_step`:
   - plus bas (`60`) = scroll plus doux
   - plus haut (`180`) = scroll plus rapide
@@ -140,6 +170,9 @@ Reglages utiles dans `config.json`:
 - `deux doigts (index+majeur)` (main dominante) -> activer/desactiver drag souris (si armed)
 - `pincement pouce+index` -> clic gauche (si armed, avec cooldown)
 - `main ouverte rapide` -> play/pause media (si armed, avec cooldown)
+- `main droite levee (corps)` -> volume +
+- `main gauche levee (corps)` -> volume -
+- `deux mains levees maintenues` -> play/pause media
 
 Deplacer une fenetre:
 1. Passer en `ARMED`.
@@ -152,7 +185,7 @@ Deplacer une fenetre:
 
 - Mode par defaut: `DISARMED`.
 - Tant que `DISARMED`, aucun geste ne declenche d'action OS.
-- Actions autorisees limitees a: souris, clic gauche, drag souris, media play/pause.
+- Actions autorisees limitees a: souris, clic gauche, drag souris, media play/pause, volume +/-.
 - Aucune action destructive n'est implementee (pas de fermeture d'app, suppression de fichier, arret machine, execution de commande shell).
 - Cooldowns pour eviter les repetitions involontaires.
 - Logs locaux dans `logs/gesturedesk.log`.

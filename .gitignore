@@ -9,6 +9,7 @@ __pycache__/
 # Local runtime artifacts
 logs/
 *.log
+models/*.task
 
 # Local secrets/config
 config.json

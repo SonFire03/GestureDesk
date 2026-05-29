@@ -16,6 +16,8 @@ from gesturedesk.gestures import landmarks_to_points, recognize_gesture
 from gesturedesk.hand_selection import select_dominant_hand_index
 from gesturedesk.runtime_utils import is_point_in_active_zone, majority_vote_gesture
 from gesturedesk.safety import SafetyController
+from gesturedesk.actions import map_body_gesture_to_action
+from gesturedesk.pose import recognize_body_gesture
 
 
 HAND_CONNECTIONS = [
@@ -105,6 +107,34 @@ def _create_hand_landmarker(config: AppConfig):
     return HandLandmarker.create_from_options(options)
 
 
+def _create_pose_landmarker(config: AppConfig, model_path: str | None = None):
+    model_path = Path(model_path or config.pose_model_path)
+    if not model_path.exists():
+        raise RuntimeError(
+            f"Modele Pose Landmarker introuvable: {model_path}. "
+            "Ajoute un fichier local 'pose_landmarker_lite.task' puis relance."
+        )
+    try:
+        from mediapipe.tasks.python.core.base_options import BaseOptions
+        from mediapipe.tasks.python.vision.core.vision_task_running_mode import VisionTaskRunningMode
+        from mediapipe.tasks.python.vision.pose_landmarker import (
+            PoseLandmarker,
+            PoseLandmarkerOptions,
+        )
+    except Exception as exc:
+        raise RuntimeError(f"MediaPipe Pose Tasks indisponible: {exc}") from exc
+
+    options = PoseLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=str(model_path)),
+        running_mode=VisionTaskRunningMode.VIDEO,
+        num_poses=1,
+        min_pose_detection_confidence=config.min_detection_confidence,
+        min_pose_presence_confidence=config.min_tracking_confidence,
+        min_tracking_confidence=config.min_tracking_confidence,
+    )
+    return PoseLandmarker.create_from_options(options)
+
+
 class GestureDeskApp:
     def __init__(self, config: AppConfig, logger, config_path: str = "config.json") -> None:
         self.config = config
@@ -131,6 +161,7 @@ class GestureDeskApp:
         self._last_detection_result = None
         self._inference_stride = max(1, int(self.config.inference_every_n_frames))
         self._inference_scale = float(self.config.inference_scale)
+        self._last_mp_timestamp_ms = -1
         self._gesture_history: deque[str] = deque(maxlen=5)
         self._active_zone_margin = max(0.01, min(0.25, config.active_zone_margin))
         self._profile_name = "balanced"
@@ -148,6 +179,9 @@ class GestureDeskApp:
         self._theme_name = "cyber"
         self._gesture_confidence = 1.0
         self._gesture_timeline: deque[str] = deque(maxlen=14)
+        self._body_both_started_at: float | None = None
+        self._last_body_gesture = "none"
+        self._pose_model_label = Path(self.config.pose_model_path).stem
 
     def run(self) -> int:
         try:
@@ -156,6 +190,10 @@ class GestureDeskApp:
                 width=self.config.camera_width,
                 height=self.config.camera_height,
                 fps=self.config.camera_fps,
+                fourcc=self.config.camera_fourcc,
+                autofocus=self.config.camera_autofocus,
+                auto_exposure=self.config.camera_auto_exposure,
+                exposure=self.config.camera_exposure,
             )
         except CameraError as exc:
             self.logger.error(str(exc))
@@ -171,6 +209,13 @@ class GestureDeskApp:
             return 1
 
         with hand_landmarker:
+            pose_landmarker = None
+            if self.config.enable_body_control:
+                try:
+                    pose_landmarker = _create_pose_landmarker(self.config)
+                except Exception as exc:
+                    pose_landmarker = None
+                    self.logger.warning("Body control desactive (Pose indisponible): %s", exc)
             self.logger.info("Application demarree. Camera id=%s", self.config.camera_id)
             cv2.namedWindow("GestureDesk", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("GestureDesk", 1400, 900)
@@ -197,10 +242,13 @@ class GestureDeskApp:
                     )
                 else:
                     rgb_for_inference = rgb
+                timestamp_ms = int(time.monotonic() * 1000)
+                if timestamp_ms <= self._last_mp_timestamp_ms:
+                    timestamp_ms = self._last_mp_timestamp_ms + 1
+                self._last_mp_timestamp_ms = timestamp_ms
                 if self._frame_idx % self._inference_stride == 0 or self._last_detection_result is None:
                     t_inf = time.monotonic()
                     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_for_inference)
-                    timestamp_ms = int(time.time() * 1000)
                     self._last_detection_result = hand_landmarker.detect_for_video(mp_image, timestamp_ms)
                     self._t_infer_ms = (time.monotonic() - t_inf) * 1000.0
                 result = self._last_detection_result
@@ -208,6 +256,7 @@ class GestureDeskApp:
                 gesture = "idle"
                 index_point = None
                 fast_open_palm = False
+                body_gesture = "none"
 
                 if result.hand_landmarks:
                     dominant_idx = select_dominant_hand_index(
@@ -233,6 +282,15 @@ class GestureDeskApp:
                             # Finger card removed on user request.
                 else:
                     self._index_trail.clear()
+
+                if pose_landmarker is not None:
+                    mp_pose_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_for_inference)
+                    pose_result = pose_landmarker.detect_for_video(mp_pose_image, timestamp_ms)
+                    pose_landmarks = pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
+                    body_gesture = recognize_body_gesture(pose_landmarks)
+                    self._last_body_gesture = body_gesture
+                    if pose_landmarks and self.config.draw_pose_overlay and not self.config.ui_minimal:
+                        self._draw_pose_overlay(frame, pose_landmarks)
 
                 self._gesture_history.append(gesture)
                 gesture = majority_vote_gesture(list(self._gesture_history), fallback=gesture)
@@ -261,6 +319,21 @@ class GestureDeskApp:
                 decision = self._state.step(raw_gesture=gesture, proposed_action=action, now=time.monotonic())
                 gesture = decision.stable_gesture
                 action = decision.action
+
+                if body_gesture == "both_hands_up":
+                    if self._body_both_started_at is None:
+                        self._body_both_started_at = now
+                    elif now - self._body_both_started_at >= self.config.body_hold_seconds:
+                        body_gesture = "both_hands_up_hold"
+                else:
+                    self._body_both_started_at = None
+
+                if action == "none":
+                    action = map_body_gesture_to_action(
+                        body_gesture=body_gesture,
+                        armed=self.safety.armed,
+                        enable_media_keys=self.config.enable_media_keys,
+                    )
 
                 if self.safety.can_execute(action):
                     mapped_point = index_point
@@ -308,9 +381,21 @@ class GestureDeskApp:
                     self._apply_profile("performance")
                 if key == ord("t"):
                     self._cycle_theme()
+                if key == ord("7"):
+                    pose_landmarker = self._disable_body_control_runtime(pose_landmarker)
+                if key == ord("8"):
+                    pose_landmarker = self._switch_pose_model(
+                        pose_landmarker, "models/pose_landmarker_lite.task"
+                    )
+                if key == ord("9"):
+                    pose_landmarker = self._switch_pose_model(
+                        pose_landmarker, "models/pose_landmarker_full.task"
+                    )
                 _ = t_loop
 
         self.actions.release_all()
+        if "pose_landmarker" in locals() and pose_landmarker is not None:
+            pose_landmarker.close()
         cam.release()
         cv2.destroyAllWindows()
         self.logger.info("Application stopped")
@@ -487,7 +572,7 @@ class GestureDeskApp:
         h, w = frame.shape[:2]
         scale = max(0.85, min(1.25, w / 1280.0))
         x0, y0 = 10, 10
-        panel_w, panel_h = 240, 90
+        panel_w, panel_h = 240, 105
         fs = 0.38
         fs_small = 0.32
         lh = 15
@@ -500,6 +585,8 @@ class GestureDeskApp:
         cv2.putText(frame, f"S {armed_label}", (x0 + 8, y0 + 13 + lh * 2), cv2.FONT_HERSHEY_SIMPLEX, fs, color, 1, cv2.LINE_AA)
         cv2.putText(frame, f"A {self._last_action_label}", (x0 + 8, y0 + 13 + lh * 3), cv2.FONT_HERSHEY_SIMPLEX, fs, theme["hud_text"], 1, cv2.LINE_AA)
         cv2.putText(frame, f"P {self._profile_name}  C {self._gesture_confidence:.2f}", (x0 + 8, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
+        cv2.putText(frame, f"B {self._last_body_gesture}", (x0 + 8, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
+        cv2.putText(frame, f"M {self._pose_model_label}", (x0 + 118, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
         if self._calibrating:
             cv2.putText(frame, "CAL...", (x0 + panel_w - 42, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, (120, 255, 210), 1, cv2.LINE_AA)
 
@@ -521,6 +608,58 @@ class GestureDeskApp:
             cv2.LINE_AA,
         )
         # Gesture timeline removed on user request.
+
+    def _switch_pose_model(self, pose_landmarker, model_path: str):
+        self.config = AppConfig(**{**self.config.__dict__, "enable_body_control": True, "pose_model_path": model_path})
+        try:
+            new_pose = _create_pose_landmarker(self.config, model_path=model_path)
+            if pose_landmarker is not None:
+                pose_landmarker.close()
+            self._pose_model_label = Path(model_path).stem
+            save_config_updates(
+                self.config_path,
+                {"pose_model_path": model_path, "enable_body_control": True},
+            )
+            self.logger.info("Pose model switched: %s", model_path)
+            self._last_action_label = f"pose={self._pose_model_label}"
+            return new_pose
+        except Exception as exc:
+            self.logger.warning("Pose model switch failed (%s): %s", model_path, exc)
+            self._last_action_label = "pose_switch_failed"
+            return pose_landmarker
+
+    def _disable_body_control_runtime(self, pose_landmarker):
+        if pose_landmarker is not None:
+            pose_landmarker.close()
+        self.config = AppConfig(**{**self.config.__dict__, "enable_body_control": False})
+        self._pose_model_label = "hands_only"
+        self._last_body_gesture = "none"
+        self._body_both_started_at = None
+        save_config_updates(self.config_path, {"enable_body_control": False})
+        self.logger.info("Body control disabled (hands only)")
+        self._last_action_label = "hands_only"
+        return None
+
+    def _draw_pose_overlay(self, frame, pose_landmarks) -> None:
+        h, w = frame.shape[:2]
+        line_color = (255, 180, 60)
+        point_color = (255, 220, 120)
+        edges = [
+            (11, 12),  # shoulders
+            (11, 13), (13, 15),  # left arm
+            (12, 14), (14, 16),  # right arm
+        ]
+        pts = {}
+        for idx in {11, 12, 13, 14, 15, 16}:
+            if idx < len(pose_landmarks):
+                lm = pose_landmarks[idx]
+                if getattr(lm, "visibility", 1.0) > 0.4:
+                    pts[idx] = (int(lm.x * w), int(lm.y * h))
+        for s, e in edges:
+            if s in pts and e in pts:
+                cv2.line(frame, pts[s], pts[e], line_color, 2, cv2.LINE_AA)
+        for p in pts.values():
+            cv2.circle(frame, p, 4, point_color, -1, cv2.LINE_AA)
 
     def _draw_active_zone(self, frame) -> None:
         if self.config.ui_minimal:

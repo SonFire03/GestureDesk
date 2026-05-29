@@ -1,6 +1,6 @@
 import time
 
-from gesturedesk.actions import CooldownManager, map_gesture_to_action
+from gesturedesk.actions import CooldownManager, map_body_gesture_to_action, map_gesture_to_action
 from gesturedesk.actions import ActionExecutor
 
 
@@ -59,6 +59,23 @@ def test_mapping_armed_fist_drag_toggle():
     )
     assert action == "toggle_drag"
 
+
+def test_body_mapping_disarmed_safe():
+    action = map_body_gesture_to_action(
+        body_gesture="right_hand_up",
+        armed=False,
+        enable_media_keys=True,
+    )
+    assert action == "none"
+
+
+def test_body_mapping_volume_up():
+    action = map_body_gesture_to_action(
+        body_gesture="right_hand_up",
+        armed=True,
+        enable_media_keys=True,
+    )
+    assert action == "volume_up"
 
 
 

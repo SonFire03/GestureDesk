@@ -44,6 +44,22 @@ def map_gesture_to_action(
     return "none"
 
 
+def map_body_gesture_to_action(
+    body_gesture: str,
+    armed: bool,
+    enable_media_keys: bool,
+) -> str:
+    if not armed:
+        return "none"
+    if body_gesture == "right_hand_up":
+        return "volume_up"
+    if body_gesture == "left_hand_up":
+        return "volume_down"
+    if body_gesture == "both_hands_up_hold" and enable_media_keys:
+        return "media_play_pause"
+    return "none"
+
+
 class ActionExecutor:
     def __init__(
         self,
@@ -114,6 +130,13 @@ class ActionExecutor:
             self.pyautogui.press("playpause")
             return "media_play_pause"
 
+        if action == "volume_up" and self.cooldown.ready("volume_up"):
+            self.pyautogui.press("volumeup")
+            return "volume_up"
+
+        if action == "volume_down" and self.cooldown.ready("volume_down"):
+            self.pyautogui.press("volumedown")
+            return "volume_down"
 
         return "cooldown_or_ignored"
 

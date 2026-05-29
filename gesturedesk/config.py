@@ -11,7 +11,12 @@ class AppConfig:
     camera_width: int = 960
     camera_height: int = 540
     camera_fps: int = 30
+    camera_fourcc: str = "MJPG"
+    camera_autofocus: bool = True
+    camera_auto_exposure: bool = True
+    camera_exposure: int = -1
     model_path: str = "models/hand_landmarker.task"
+    pose_model_path: str = "models/pose_landmarker_lite.task"
     inference_scale: float = 0.75
     inference_every_n_frames: int = 1
     draw_secondary_hand: bool = True
@@ -37,6 +42,9 @@ class AppConfig:
     enable_media_keys: bool = True
     enable_scroll: bool = True
     gesture_hold_seconds: float = 1.0
+    enable_body_control: bool = True
+    draw_pose_overlay: bool = True
+    body_hold_seconds: float = 0.8
 
 
 def load_config(path: str | Path = "config.json") -> AppConfig:
@@ -52,7 +60,12 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         camera_width=int(data.get("camera_width", 960)),
         camera_height=int(data.get("camera_height", 540)),
         camera_fps=int(data.get("camera_fps", 30)),
+        camera_fourcc=str(data.get("camera_fourcc", "MJPG")),
+        camera_autofocus=bool(data.get("camera_autofocus", True)),
+        camera_auto_exposure=bool(data.get("camera_auto_exposure", True)),
+        camera_exposure=int(data.get("camera_exposure", -1)),
         model_path=str(data.get("model_path", "models/hand_landmarker.task")),
+        pose_model_path=str(data.get("pose_model_path", "models/pose_landmarker_lite.task")),
         inference_scale=float(data.get("inference_scale", 0.75)),
         inference_every_n_frames=int(data.get("inference_every_n_frames", 1)),
         draw_secondary_hand=bool(data.get("draw_secondary_hand", True)),
@@ -78,6 +91,9 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         enable_media_keys=bool(data.get("enable_media_keys", True)),
         enable_scroll=bool(data.get("enable_scroll", True)),
         gesture_hold_seconds=float(data.get("gesture_hold_seconds", 1.0)),
+        enable_body_control=bool(data.get("enable_body_control", True)),
+        draw_pose_overlay=bool(data.get("draw_pose_overlay", True)),
+        body_hold_seconds=float(data.get("body_hold_seconds", 0.8)),
     )
 
 
