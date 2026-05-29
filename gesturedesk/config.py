@@ -19,6 +19,8 @@ class AppConfig:
     pose_model_path: str = "models/pose_landmarker_lite.task"
     inference_scale: float = 0.75
     inference_every_n_frames: int = 1
+    pose_inference_scale: float = 0.5
+    pose_inference_every_n_frames: int = 3
     draw_secondary_hand: bool = True
     draw_finger_card: bool = True
     ui_minimal: bool = False
@@ -68,6 +70,8 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         pose_model_path=str(data.get("pose_model_path", "models/pose_landmarker_lite.task")),
         inference_scale=float(data.get("inference_scale", 0.75)),
         inference_every_n_frames=int(data.get("inference_every_n_frames", 1)),
+        pose_inference_scale=float(data.get("pose_inference_scale", 0.5)),
+        pose_inference_every_n_frames=int(data.get("pose_inference_every_n_frames", 3)),
         draw_secondary_hand=bool(data.get("draw_secondary_hand", True)),
         draw_finger_card=bool(data.get("draw_finger_card", True)),
         ui_minimal=bool(data.get("ui_minimal", False)),

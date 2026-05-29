@@ -143,6 +143,10 @@ Reglages utiles dans `config.json`:
 - `inference_every_n_frames`:
   - `1` = inference chaque frame (precision max)
   - `2` = inference une frame sur deux (FPS plus haut)
+- `pose_inference_scale`:
+  - redimensionnement dedie a l'inference corps (plus bas = plus rapide)
+- `pose_inference_every_n_frames`:
+  - cadence inference corps (`3` ou `4` conseille pour gagner des FPS)
 - `ui_minimal`:
   - `true` pour desactiver le rendu visuel couteux de la main (FPS max)
 - `draw_secondary_hand`:

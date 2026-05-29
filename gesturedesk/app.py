@@ -17,7 +17,7 @@ from gesturedesk.hand_selection import select_dominant_hand_index
 from gesturedesk.runtime_utils import is_point_in_active_zone, majority_vote_gesture
 from gesturedesk.safety import SafetyController
 from gesturedesk.actions import map_body_gesture_to_action
-from gesturedesk.pose import recognize_body_gesture
+from gesturedesk.pose import POSE_FULL_EDGES, POSE_GROUP_COLORS, POSE_GROUPS, recognize_body_gesture
 
 
 HAND_CONNECTIONS = [
@@ -161,6 +161,8 @@ class GestureDeskApp:
         self._last_detection_result = None
         self._inference_stride = max(1, int(self.config.inference_every_n_frames))
         self._inference_scale = float(self.config.inference_scale)
+        self._pose_inference_stride = max(1, int(self.config.pose_inference_every_n_frames))
+        self._pose_inference_scale = max(0.25, min(1.0, float(self.config.pose_inference_scale)))
         self._last_mp_timestamp_ms = -1
         self._gesture_history: deque[str] = deque(maxlen=5)
         self._active_zone_margin = max(0.01, min(0.25, config.active_zone_margin))
@@ -175,6 +177,7 @@ class GestureDeskApp:
         self._calib_max_y = max(self._calib_min_y + 1e-6, min(1.0, config.calib_max_y))
         self._t_capture_ms = 0.0
         self._t_infer_ms = 0.0
+        self._t_pose_ms = 0.0
         self._t_render_ms = 0.0
         self._theme_name = "cyber"
         self._gesture_confidence = 1.0
@@ -182,6 +185,7 @@ class GestureDeskApp:
         self._body_both_started_at: float | None = None
         self._last_body_gesture = "none"
         self._pose_model_label = Path(self.config.pose_model_path).stem
+        self._last_pose_landmarks = None
 
     def run(self) -> int:
         try:
@@ -284,9 +288,23 @@ class GestureDeskApp:
                     self._index_trail.clear()
 
                 if pose_landmarker is not None:
-                    mp_pose_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_for_inference)
-                    pose_result = pose_landmarker.detect_for_video(mp_pose_image, timestamp_ms)
-                    pose_landmarks = pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
+                    if self._pose_inference_scale < 0.99:
+                        rgb_for_pose = cv2.resize(
+                            rgb,
+                            None,
+                            fx=self._pose_inference_scale,
+                            fy=self._pose_inference_scale,
+                            interpolation=cv2.INTER_LINEAR,
+                        )
+                    else:
+                        rgb_for_pose = rgb
+                    if self._frame_idx % self._pose_inference_stride == 0 or self._last_pose_landmarks is None:
+                        t_pose = time.monotonic()
+                        mp_pose_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_for_pose)
+                        pose_result = pose_landmarker.detect_for_video(mp_pose_image, timestamp_ms)
+                        self._last_pose_landmarks = pose_result.pose_landmarks[0] if pose_result.pose_landmarks else None
+                        self._t_pose_ms = (time.monotonic() - t_pose) * 1000.0
+                    pose_landmarks = self._last_pose_landmarks
                     body_gesture = recognize_body_gesture(pose_landmarks)
                     self._last_body_gesture = body_gesture
                     if pose_landmarks and self.config.draw_pose_overlay and not self.config.ui_minimal:
@@ -599,7 +617,7 @@ class GestureDeskApp:
         cv2.rectangle(frame, (px, py), (px + perf_w, py + perf_h), theme["hud_border"], 1, cv2.LINE_AA)
         cv2.putText(
             frame,
-            f"ms  cap {self._t_capture_ms:.1f}  inf {self._t_infer_ms:.1f}  rnd {self._t_render_ms:.1f}",
+            f"ms  cap {self._t_capture_ms:.1f}  hand {self._t_infer_ms:.1f}  pose {self._t_pose_ms:.1f}",
             (px + int(8 * scale), py + int(26 * scale)),
             cv2.FONT_HERSHEY_SIMPLEX,
             fs_small,
@@ -642,24 +660,41 @@ class GestureDeskApp:
 
     def _draw_pose_overlay(self, frame, pose_landmarks) -> None:
         h, w = frame.shape[:2]
-        line_color = (255, 180, 60)
-        point_color = (255, 220, 120)
-        edges = [
-            (11, 12),  # shoulders
-            (11, 13), (13, 15),  # left arm
-            (12, 14), (14, 16),  # right arm
-        ]
         pts = {}
-        for idx in {11, 12, 13, 14, 15, 16}:
+        vis = {}
+        for idx in range(min(33, len(pose_landmarks))):
             if idx < len(pose_landmarks):
                 lm = pose_landmarks[idx]
-                if getattr(lm, "visibility", 1.0) > 0.4:
+                v = float(getattr(lm, "visibility", 1.0))
+                vis[idx] = v
+                if v > 0.4:
                     pts[idx] = (int(lm.x * w), int(lm.y * h))
-        for s, e in edges:
+
+        def _edge_color(s: int, e: int):
+            pair = (s, e)
+            rev = (e, s)
+            for group_name, pairs in POSE_GROUPS.items():
+                if pair in pairs or rev in pairs:
+                    return POSE_GROUP_COLORS[group_name]
+            return (180, 180, 180)
+
+        for s, e in POSE_FULL_EDGES:
             if s in pts and e in pts:
-                cv2.line(frame, pts[s], pts[e], line_color, 2, cv2.LINE_AA)
-        for p in pts.values():
-            cv2.circle(frame, p, 4, point_color, -1, cv2.LINE_AA)
+                c = _edge_color(s, e)
+                v = min(vis.get(s, 1.0), vis.get(e, 1.0))
+                t = 1 if v < 0.65 else 2
+                cv2.line(frame, pts[s], pts[e], c, t, cv2.LINE_AA)
+
+        key_points = {0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28}
+        for idx, p in pts.items():
+            v = vis.get(idx, 1.0)
+            if idx in key_points:
+                # subtle halo for key joints
+                cv2.circle(frame, p, 6, (255, 255, 255), 1, cv2.LINE_AA)
+            radius = 3 if idx in key_points else 2
+            b = int(80 + 140 * max(0.0, min(1.0, v)))
+            color = (b, b, 255)
+            cv2.circle(frame, p, radius, color, -1, cv2.LINE_AA)
 
     def _draw_active_zone(self, frame) -> None:
         if self.config.ui_minimal:
@@ -676,18 +711,24 @@ class GestureDeskApp:
             self._profile_name = "precision"
             self._inference_scale = 0.72
             self._inference_stride = 1
+            self._pose_inference_scale = 0.62
+            self._pose_inference_stride = 2
             self._active_zone_margin = 0.05
             self.actions.mouse_smoothing_alpha = 0.28
         elif profile == "performance":
             self._profile_name = "performance"
             self._inference_scale = 0.55
             self._inference_stride = 3
+            self._pose_inference_scale = 0.42
+            self._pose_inference_stride = 4
             self._active_zone_margin = 0.10
             self.actions.mouse_smoothing_alpha = 0.50
         else:
             self._profile_name = "balanced"
             self._inference_scale = 0.62
             self._inference_stride = 2
+            self._pose_inference_scale = 0.50
+            self._pose_inference_stride = 3
             self._active_zone_margin = 0.08
             self.actions.mouse_smoothing_alpha = 0.40
         self.logger.info("Profile switched: %s", self._profile_name)

@@ -27,6 +27,8 @@
   "camera_width": 960,
   "camera_height": 540,
   "inference_scale": 0.75,
+  "pose_inference_scale": 0.5,
+  "pose_inference_every_n_frames": 3,
   "draw_secondary_hand": true,
   "draw_finger_card": true,
   "inference_every_n_frames": 1,
