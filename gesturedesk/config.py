@@ -23,6 +23,8 @@ class AppConfig:
     pose_inference_every_n_frames: int = 3
     draw_secondary_hand: bool = True
     draw_finger_card: bool = True
+    draw_path: bool = True
+    enable_hsv_fallback: bool = False
     ui_minimal: bool = False
     active_zone_margin: float = 0.08
     calib_min_x: float = 0.0
@@ -77,6 +79,8 @@ def load_config(path: str | Path = "config.json") -> AppConfig:
         pose_inference_every_n_frames=int(data.get("pose_inference_every_n_frames", 3)),
         draw_secondary_hand=bool(data.get("draw_secondary_hand", True)),
         draw_finger_card=bool(data.get("draw_finger_card", True)),
+        draw_path=bool(data.get("draw_path", True)),
+        enable_hsv_fallback=bool(data.get("enable_hsv_fallback", False)),
         ui_minimal=bool(data.get("ui_minimal", False)),
         active_zone_margin=float(data.get("active_zone_margin", 0.08)),
         calib_min_x=float(data.get("calib_min_x", 0.0)),

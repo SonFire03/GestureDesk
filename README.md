@@ -70,9 +70,16 @@ Raccourcis clavier pendant l'execution:
 - `o`: ouvrir/fermer UI Studio (reglages live)
 - `j` / `k`: descendre/monter dans la liste Studio
 - `h` / `l`: diminuer/augmenter la valeur selectionnee (sauvegarde immediate)
+- `p`: activer/desactiver la trace du doigt (draw path)
+- `f`: activer/desactiver le fallback HSV (tracking couleur bleu/vert)
+- `v`: afficher/masquer la fenetre `GestureDesk Skeleton`
 - `7`: mode mains uniquement (desactive body control)
 - `8`: charger `pose_landmarker_lite.task`
 - `9`: charger `pose_landmarker_full.task`
+
+Affichage:
+- Fenetre principale: `GestureDesk`
+- Fenetre secondaire squelette: `GestureDesk Skeleton`
 
 - <img width="1404" height="938" alt="image" src="https://github.com/user-attachments/assets/cb615076-28a6-4943-8ac0-f1c23ea80c9e" />
 
@@ -163,10 +170,14 @@ Reglages utiles dans `config.json`:
   - `false` pour ne pas dessiner la main secondaire (gain FPS)
 - `draw_finger_card`:
   - `false` pour retirer la carte doigts (gain FPS leger)
+- `draw_path`:
+  - active la trainée visuelle du doigt index
+- `enable_hsv_fallback`:
+  - fallback tracking couleur quand la main n'est pas detectee (utile demo)
 - `enable_body_control`:
   - active le controle corps (pose epaules/poignets)
 - `draw_pose_overlay`:
-  - affiche le squelette haut du corps
+  - affiche le squelette corps complet
 - `body_hold_seconds`:
   - maintien requis pour `deux mains levees` (anti faux positifs)
 - `scroll_step`:

@@ -201,6 +201,9 @@ class GestureDeskApp:
         self._pose_model_label = Path(self.config.pose_model_path).stem
         self._last_pose_landmarks = None
         self._ui_mode = config.ui_mode if config.ui_mode in {"pro", "debug"} else "pro"
+        self._show_skeleton_window = True
+        self._draw_path_enabled = bool(config.draw_path)
+        self._hsv_fallback_enabled = bool(config.enable_hsv_fallback)
         self._studio_open = False
         self._studio_idx = 0
         self._studio_items = [
@@ -251,6 +254,9 @@ class GestureDeskApp:
             self.logger.info("Application demarree. Camera id=%s", self.config.camera_id)
             cv2.namedWindow("GestureDesk", cv2.WINDOW_NORMAL)
             cv2.resizeWindow("GestureDesk", 1400, 900)
+            if self._show_skeleton_window:
+                cv2.namedWindow("GestureDesk Skeleton", cv2.WINDOW_NORMAL)
+                cv2.resizeWindow("GestureDesk Skeleton", 960, 540)
             while True:
                 t_loop = time.monotonic()
                 t0 = time.monotonic()
@@ -289,6 +295,7 @@ class GestureDeskApp:
                 index_point = None
                 fast_open_palm = False
                 body_gesture = "none"
+                pose_landmarks = None
 
                 if result.hand_landmarks:
                     dominant_idx = select_dominant_hand_index(
@@ -314,6 +321,13 @@ class GestureDeskApp:
                             # Finger card removed on user request.
                 else:
                     self._index_trail.clear()
+
+                if index_point is None and self._hsv_fallback_enabled:
+                    hsv_point = self._detect_hsv_fallback_point(frame)
+                    if hsv_point is not None:
+                        index_point = hsv_point
+                        gesture = "index"
+                        self._last_action_label = "hsv_fallback"
 
                 if pose_landmarker is not None:
                     if self._pose_inference_scale < 0.99:
@@ -404,6 +418,23 @@ class GestureDeskApp:
                 self._t_render_ms = (time.monotonic() - t_rnd) * 1000.0
                 cv2.imshow("GestureDesk", frame)
 
+                # Secondary skeleton-only window (hands + pose) for clean tracking visualization.
+                skeleton_frame = np.zeros_like(frame)
+                if result.hand_landmarks:
+                    dominant_idx = select_dominant_hand_index(
+                        result.hand_landmarks,
+                        mode=self.config.dominant_hand_mode,
+                    )
+                    for idx, hand_landmarks in enumerate(result.hand_landmarks):
+                        is_dominant = idx == dominant_idx
+                        if (not is_dominant) and (not self.config.draw_secondary_hand):
+                            continue
+                        self._draw_hand_landmarks(skeleton_frame, hand_landmarks, is_dominant=is_dominant)
+                if pose_landmarks and self.config.draw_pose_overlay:
+                    self._draw_pose_overlay(skeleton_frame, pose_landmarks)
+                if self._show_skeleton_window:
+                    cv2.imshow("GestureDesk Skeleton", skeleton_frame)
+
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     self.logger.info("Quit requested")
@@ -434,6 +465,22 @@ class GestureDeskApp:
                 if key == ord("o"):
                     self._studio_open = not self._studio_open
                     self._last_action_label = f"studio={'on' if self._studio_open else 'off'}"
+                if key == ord("p"):
+                    self._draw_path_enabled = not self._draw_path_enabled
+                    save_config_updates(self.config_path, {"draw_path": self._draw_path_enabled})
+                    self._last_action_label = f"draw_path={self._draw_path_enabled}"
+                if key == ord("f"):
+                    self._hsv_fallback_enabled = not self._hsv_fallback_enabled
+                    save_config_updates(self.config_path, {"enable_hsv_fallback": self._hsv_fallback_enabled})
+                    self._last_action_label = f"hsv_fallback={self._hsv_fallback_enabled}"
+                if key == ord("v"):
+                    self._show_skeleton_window = not self._show_skeleton_window
+                    if self._show_skeleton_window:
+                        cv2.namedWindow("GestureDesk Skeleton", cv2.WINDOW_NORMAL)
+                        cv2.resizeWindow("GestureDesk Skeleton", 960, 540)
+                    else:
+                        cv2.destroyWindow("GestureDesk Skeleton")
+                    self._last_action_label = f"skeleton_win={self._show_skeleton_window}"
                 if self._studio_open and key in (ord("j"), 84):
                     self._studio_idx = (self._studio_idx + 1) % len(self._studio_items)
                 if self._studio_open and key in (ord("k"), 82):
@@ -526,10 +573,11 @@ class GestureDeskApp:
         # Index fingertip halo for cursor targeting feedback.
         if 8 < len(pts) and is_dominant:
             x, y = pts[8]
-            self._index_trail.append((x, y))
-            # Trail every 2 frames to reduce GPU/CPU pressure.
-            if self._frame_idx % 2 == 0:
-                self._draw_index_trail(frame)
+            if self._draw_path_enabled:
+                self._index_trail.append((x, y))
+                # Trail every 2 frames to reduce GPU/CPU pressure.
+                if self._frame_idx % 2 == 0:
+                    self._draw_index_trail(frame)
             cv2.circle(frame, (x, y), 16, (120, 255, 215), 1, cv2.LINE_AA)
             cv2.circle(frame, (x, y), 10, (70, 245, 180), 2, cv2.LINE_AA)
             cv2.circle(frame, (x, y), 4, (150, 255, 230), -1, cv2.LINE_AA)
@@ -629,47 +677,29 @@ class GestureDeskApp:
     def _draw_overlay(self, frame, gesture: str, hands_count: int, fps: float) -> None:
         theme = THEMES[self._theme_name]
         armed_label = "ARMED" if self.safety.armed else "DISARMED"
-        color = (0, 255, 0) if self.safety.armed else (0, 0, 255)
+        state_color = (0, 255, 0) if self.safety.armed else (0, 0, 255)
         h, w = frame.shape[:2]
-        scale = max(0.85, min(1.25, w / 1280.0))
-        x0, y0 = 10, 10
-        panel_w, panel_h = (240, 72) if self._ui_mode == "pro" else (240, 105)
-        fs = 0.38
-        fs_small = 0.32
-        lh = 15
+        x0, y0 = 12, 12
+        panel_w, panel_h = (320, 98) if self._ui_mode == "pro" else (340, 120)
+        fs = 0.46
+        fs_small = 0.36
+        lh = 18
 
-        self._blend_roi(frame, x0, y0, x0 + panel_w, y0 + panel_h, 0.28, theme["bg"])
-        cv2.rectangle(frame, (x0, y0), (x0 + panel_w, y0 + panel_h), theme["hud_border"], 1, cv2.LINE_AA)
-
-        cv2.putText(frame, f"{self._theme_name.upper()}  {fps:.0f}fps", (x0 + 8, y0 + 13), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["hud_text"], 1, cv2.LINE_AA)
-        cv2.putText(frame, f"H {hands_count}  G {gesture}", (x0 + 8, y0 + 13 + lh), cv2.FONT_HERSHEY_SIMPLEX, fs, theme["hud_text"], 1, cv2.LINE_AA)
-        cv2.putText(frame, f"S {armed_label}", (x0 + 8, y0 + 13 + lh * 2), cv2.FONT_HERSHEY_SIMPLEX, fs, color, 1, cv2.LINE_AA)
-        cv2.putText(frame, f"A {self._last_action_label}", (x0 + 8, y0 + 13 + lh * 3), cv2.FONT_HERSHEY_SIMPLEX, fs, theme["hud_text"], 1, cv2.LINE_AA)
-        if self._ui_mode == "debug":
-            cv2.putText(frame, f"P {self._profile_name}  C {self._gesture_confidence:.2f}", (x0 + 8, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
-            cv2.putText(frame, f"B {self._last_body_gesture}", (x0 + 8, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
-            cv2.putText(frame, f"M {self._pose_model_label}", (x0 + 118, y0 + 13 + lh * 5), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
-            if self._calibrating:
-                cv2.putText(frame, "CAL...", (x0 + panel_w - 42, y0 + 13 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, (120, 255, 210), 1, cv2.LINE_AA)
+        self._blend_roi(frame, x0, y0, x0 + panel_w, y0 + panel_h, 0.46, (18, 18, 18))
+        cv2.rectangle(frame, (x0, y0), (x0 + panel_w, y0 + panel_h), (70, 70, 70), 1, cv2.LINE_AA)
+        cv2.putText(frame, "GestureDesk", (x0 + 10, y0 + 18), cv2.FONT_HERSHEY_SIMPLEX, fs_small, (235, 235, 235), 1, cv2.LINE_AA)
+        (tw, _th), _ = cv2.getTextSize(armed_label, cv2.FONT_HERSHEY_SIMPLEX, fs_small, 1)
+        cv2.putText(frame, armed_label, (x0 + panel_w - tw - 10, y0 + 18), cv2.FONT_HERSHEY_SIMPLEX, fs_small, state_color, 1, cv2.LINE_AA)
+        cv2.putText(frame, f"{gesture} | {self._last_body_gesture}", (x0 + 10, y0 + 18 + lh), cv2.FONT_HERSHEY_SIMPLEX, fs, theme["hud_text"], 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Action: {self._last_action_label}", (x0 + 10, y0 + 18 + lh * 2), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["hud_text"], 1, cv2.LINE_AA)
+        cv2.putText(frame, f"{fps:.1f} fps   hands {hands_count}   {self._profile_name}", (x0 + 10, y0 + 18 + lh * 3), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["hud_text"], 1, cv2.LINE_AA)
+        cv2.putText(frame, f"conf {self._gesture_confidence:.2f}   ui {self._ui_mode}", (x0 + 10, y0 + 18 + lh * 4), cv2.FONT_HERSHEY_SIMPLEX, fs_small, theme["muted"], 1, cv2.LINE_AA)
 
         if self._ui_mode == "debug":
-            perf_w = int(250 * scale)
-            perf_h = int(42 * scale)
-            px = max(10, w - perf_w - 10)
-            py = 10
-            self._blend_roi(frame, px, py, px + perf_w, py + perf_h, 0.35, theme["bg"])
-            cv2.rectangle(frame, (px, py), (px + perf_w, py + perf_h), theme["hud_border"], 1, cv2.LINE_AA)
-            cv2.putText(
-                frame,
-                f"ms  cap {self._t_capture_ms:.1f}  hand {self._t_infer_ms:.1f}  pose {self._t_pose_ms:.1f}",
-                (px + int(8 * scale), py + int(26 * scale)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                fs_small,
-                theme["hud_text"],
-                1,
-                cv2.LINE_AA,
-            )
-        # Gesture timeline removed on user request.
+            keys = "q quit  a arm  d disarm  u ui  o studio  h/l adjust  p path  f hsv  v skel  7/8/9 body"
+            self._blend_roi(frame, 12, h - 24, min(w - 12, 860), h - 8, 0.44, (18, 18, 18))
+            cv2.rectangle(frame, (12, h - 24), (min(w - 12, 860), h - 8), (70, 70, 70), 1, cv2.LINE_AA)
+            cv2.putText(frame, keys, (16, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.32, theme["hud_text"], 1, cv2.LINE_AA)
 
     def _draw_calibration_wizard(self, frame) -> None:
         h, w = frame.shape[:2]
@@ -831,11 +861,34 @@ class GestureDeskApp:
     def _draw_active_zone(self, frame) -> None:
         if self.config.ui_minimal:
             return
+        if self._ui_mode != "debug":
+            return
         h, w = frame.shape[:2]
         m = self._active_zone_margin
         x1, y1 = int(w * m), int(h * m)
         x2, y2 = int(w * (1.0 - m)), int(h * (1.0 - m))
-        cv2.rectangle(frame, (x1, y1), (x2, y2), THEMES[self._theme_name]["hud_border"], 1, cv2.LINE_AA)
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (100, 100, 100), 1, cv2.LINE_AA)
+
+    def _detect_hsv_fallback_point(self, frame) -> tuple[float, float] | None:
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        lower = np.array([110, 50, 50], dtype=np.uint8)
+        upper = np.array([130, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower, upper)
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.erode(mask, kernel, iterations=2)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.dilate(mask, kernel, iterations=1)
+        cnts, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not cnts:
+            return None
+        c = max(cnts, key=cv2.contourArea)
+        ((x, y), radius) = cv2.minEnclosingCircle(c)
+        if radius < 6:
+            return None
+        h, w = frame.shape[:2]
+        nx = max(0.0, min(1.0, float(x) / max(1, w - 1)))
+        ny = max(0.0, min(1.0, float(y) / max(1, h - 1)))
+        return (nx, ny)
 
     def _apply_profile(self, profile: str) -> None:
         profile = profile.lower()

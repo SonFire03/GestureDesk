@@ -34,6 +34,8 @@
   "pose_inference_every_n_frames": 3,
   "draw_secondary_hand": true,
   "draw_finger_card": true,
+  "draw_path": true,
+  "enable_hsv_fallback": false,
   "inference_every_n_frames": 1,
   "camera_fps": 30,
   "ui_minimal": false
