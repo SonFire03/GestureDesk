@@ -67,6 +67,9 @@ Raccourcis clavier pendant l'execution:
 - `a`: toggle manuel `armed/disarmed`
 - `d`: forcer `disarmed`
 - `u`: basculer UI `pro` / `debug`
+- `o`: ouvrir/fermer UI Studio (reglages live)
+- `j` / `k`: descendre/monter dans la liste Studio
+- `h` / `l`: diminuer/augmenter la valeur selectionnee (sauvegarde immediate)
 - `7`: mode mains uniquement (desactive body control)
 - `8`: charger `pose_landmarker_lite.task`
 - `9`: charger `pose_landmarker_full.task`

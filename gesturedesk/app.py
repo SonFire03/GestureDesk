@@ -201,6 +201,19 @@ class GestureDeskApp:
         self._pose_model_label = Path(self.config.pose_model_path).stem
         self._last_pose_landmarks = None
         self._ui_mode = config.ui_mode if config.ui_mode in {"pro", "debug"} else "pro"
+        self._studio_open = False
+        self._studio_idx = 0
+        self._studio_items = [
+            ("inference_scale", "hand scale", 0.40, 0.95, 0.02),
+            ("inference_every_n_frames", "hand stride", 1, 5, 1),
+            ("pose_inference_scale", "pose scale", 0.30, 0.90, 0.02),
+            ("pose_inference_every_n_frames", "pose stride", 1, 6, 1),
+            ("mouse_smoothing_alpha", "mouse smooth", 0.10, 0.85, 0.02),
+            ("active_zone_margin", "active margin", 0.00, 0.20, 0.01),
+            ("click_cooldown_seconds", "click cooldown", 0.10, 0.80, 0.01),
+            ("drag_toggle_hold_seconds", "drag hold", 0.10, 0.60, 0.01),
+            ("pinch_click_hold_seconds", "pinch hold", 0.05, 0.40, 0.01),
+        ]
 
     def run(self) -> int:
         try:
@@ -386,6 +399,8 @@ class GestureDeskApp:
                 if self._calibrating:
                     self._draw_calibration_wizard(frame)
                 self._draw_active_zone(frame)
+                if self._studio_open:
+                    self._draw_studio_panel(frame)
                 self._t_render_ms = (time.monotonic() - t_rnd) * 1000.0
                 cv2.imshow("GestureDesk", frame)
 
@@ -416,6 +431,17 @@ class GestureDeskApp:
                     self._cycle_theme()
                 if key == ord("u"):
                     self._toggle_ui_mode()
+                if key == ord("o"):
+                    self._studio_open = not self._studio_open
+                    self._last_action_label = f"studio={'on' if self._studio_open else 'off'}"
+                if self._studio_open and key in (ord("j"), 84):
+                    self._studio_idx = (self._studio_idx + 1) % len(self._studio_items)
+                if self._studio_open and key in (ord("k"), 82):
+                    self._studio_idx = (self._studio_idx - 1) % len(self._studio_items)
+                if self._studio_open and key in (ord("h"), 81):
+                    self._studio_adjust(-1)
+                if self._studio_open and key in (ord("l"), 83):
+                    self._studio_adjust(1)
                 if key == ord("7"):
                     pose_landmarker = self._disable_body_control_runtime(pose_landmarker)
                 if key == ord("8"):
@@ -660,6 +686,78 @@ class GestureDeskApp:
         by = min(h - 16, cy + 24)
         cv2.rectangle(frame, (bx, by), (bx + bar_w, by + bar_h), (120, 140, 160), 1)
         cv2.rectangle(frame, (bx + 1, by + 1), (bx + int((bar_w - 2) * progress), by + bar_h - 1), (90, 230, 255), -1)
+
+    def _draw_studio_panel(self, frame) -> None:
+        theme = THEMES[self._theme_name]
+        h, w = frame.shape[:2]
+        panel_w = 360
+        row_h = 20
+        panel_h = 28 + row_h * (len(self._studio_items) + 1)
+        x0 = max(10, w - panel_w - 10)
+        y0 = max(60, h - panel_h - 10)
+        self._blend_roi(frame, x0, y0, x0 + panel_w, y0 + panel_h, 0.40, theme["bg"])
+        cv2.rectangle(frame, (x0, y0), (x0 + panel_w, y0 + panel_h), theme["hud_border"], 1, cv2.LINE_AA)
+        cv2.putText(frame, "STUDIO  o toggle | j/k select | h/l adjust", (x0 + 8, y0 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.43, theme["hud_text"], 1, cv2.LINE_AA)
+        for i, (_, label, *_rest) in enumerate(self._studio_items):
+            y = y0 + 36 + i * row_h
+            selected = i == self._studio_idx
+            c = theme["focus"] if selected else theme["muted"]
+            val = self._studio_value(self._studio_items[i][0])
+            cv2.putText(frame, f"{label:16s} {val}", (x0 + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.43, c, 1, cv2.LINE_AA)
+
+    def _studio_value(self, name: str) -> str:
+        v = self._studio_get(name)
+        if isinstance(v, int):
+            return str(v)
+        return f"{float(v):.2f}"
+
+    def _studio_get(self, name: str):
+        mapping = {
+            "inference_scale": self._inference_scale,
+            "inference_every_n_frames": self._inference_stride,
+            "pose_inference_scale": self._pose_inference_scale,
+            "pose_inference_every_n_frames": self._pose_inference_stride,
+            "mouse_smoothing_alpha": self.actions.mouse_smoothing_alpha,
+            "active_zone_margin": self._active_zone_margin,
+            "click_cooldown_seconds": self.actions.click_cooldown.cooldown_seconds,
+            "drag_toggle_hold_seconds": self._state.drag_hold_seconds,
+            "pinch_click_hold_seconds": self._state.click_hold_seconds,
+        }
+        return mapping[name]
+
+    def _studio_adjust(self, direction: int) -> None:
+        name, _label, vmin, vmax, step = self._studio_items[self._studio_idx]
+        old = self._studio_get(name)
+        new = old + (step * direction)
+        if isinstance(old, int):
+            new = int(max(vmin, min(vmax, round(new))))
+        else:
+            new = float(max(vmin, min(vmax, new)))
+        if new == old:
+            return
+        self._studio_set(name, new)
+        save_config_updates(self.config_path, {name: new})
+        self._last_action_label = f"{name}={new}"
+
+    def _studio_set(self, name: str, value) -> None:
+        if name == "inference_scale":
+            self._inference_scale = float(value)
+        elif name == "inference_every_n_frames":
+            self._inference_stride = max(1, int(value))
+        elif name == "pose_inference_scale":
+            self._pose_inference_scale = float(value)
+        elif name == "pose_inference_every_n_frames":
+            self._pose_inference_stride = max(1, int(value))
+        elif name == "mouse_smoothing_alpha":
+            self.actions.mouse_smoothing_alpha = float(value)
+        elif name == "active_zone_margin":
+            self._active_zone_margin = float(value)
+        elif name == "click_cooldown_seconds":
+            self.actions.click_cooldown.cooldown_seconds = float(value)
+        elif name == "drag_toggle_hold_seconds":
+            self._state.drag_hold_seconds = float(value)
+        elif name == "pinch_click_hold_seconds":
+            self._state.click_hold_seconds = float(value)
 
     def _switch_pose_model(self, pose_landmarker, model_path: str):
         self.config = AppConfig(**{**self.config.__dict__, "enable_body_control": True, "pose_model_path": model_path})
