@@ -82,6 +82,7 @@ Affichage:
 - Fenetre secondaire squelette: `GestureDesk Skeleton`
 
 - <img width="1404" height="938" alt="image" src="https://github.com/user-attachments/assets/cb615076-28a6-4943-8ac0-f1c23ea80c9e" />
+<img width="800" height="610" alt="video_2026-05-30_18-58-26-ezgif com-video-to-gif-converter" src="https://github.com/user-attachments/assets/1663149f-ada8-4997-b448-7b6215f5a4c3" />
 
 
 ## Depannage camera `/dev/video0`
